@@ -36,15 +36,24 @@ root user clicks the tracking button, then restores its previous state.
 
 ## Install
 
-Copy the release archive to the server, then run as root:
+**Download:** [thor-watch-main.tar.gz](https://github.com/peekhosting/thor-watch/archive/refs/heads/main.tar.gz)
+
+Download and install the current version directly from GitHub as `root`:
 
 ```bash
-tar -xzf thor-watch-0.3.0.tar.gz
-cd thor-watch-0.3.0
+cd /usr/local/src
+curl -fL https://github.com/peekhosting/thor-watch/archive/refs/heads/main.tar.gz \
+  -o thor-watch-main.tar.gz
+tar -xzf thor-watch-main.tar.gz
+cd thor-watch-main
 bash install.sh
 ```
 
 Open WHM and search for **Thor Watch - Load Investigator**.
+
+See the complete **[WHM installation, download, upgrade, and troubleshooting
+guide](INSTALL.md)** for source archives, versioned release downloads, checksum
+verification, and post-install validation.
 
 The official cPanel AppConfig registration utility restarts `cpsrvd` while the
 plugin is registered. Existing websites and LiteSpeed are not restarted.

@@ -31,6 +31,7 @@ from thorwatch_common import (  # noqa: E402
     event_report_data,
     load_settings,
     parse_access_line,
+    parse_exim_line,
     process_category,
     render_text_report,
 )
@@ -58,6 +59,7 @@ access_log_interval = 1
 access_log_pretrigger_bytes = 4096
 access_log_read_limit_bytes = 65536
 http_unique_limit = 100
+email_monitoring_enabled = false
 """.format(database=self.db_path)
             )
         self.settings = load_settings(self.config_path)
@@ -104,6 +106,85 @@ http_unique_limit = 100
         self.assertEqual(parsed["ua"], "LoadBot/1.0")
         stripped = parse_access_line(line, strip_query=True)
         self.assertEqual(stripped["uri"], "/wp-admin/admin-ajax.php")
+
+    def test_exim_parser_counts_only_local_submissions(self):
+        authenticated = parse_exim_line(
+            "2026-07-15 14:22:01 1uABC-000001 <= sender@example.test "
+            "H=mail.example.test P=esmtpa A=dovecot_login:sender@example.test S=1234"
+        )
+        self.assertEqual(authenticated["email_account"], "sender@example.test")
+        self.assertTrue(authenticated["authenticated"])
+        local = parse_exim_line(
+            "2026-07-15 14:22:02 1uABC-000002 <= demo@server.test U=demo P=local S=500"
+        )
+        self.assertEqual(local["local_user"], "demo")
+        inbound = parse_exim_line(
+            "2026-07-15 14:22:03 1uABC-000003 <= outside@remote.test "
+            "H=remote.test [203.0.113.5] P=esmtp S=900"
+        )
+        self.assertIsNone(inbound)
+
+    def test_email_activity_collection_and_retention(self):
+        log_path = os.path.join(self.tempdir.name, "exim_mainlog")
+        domains_path = os.path.join(self.tempdir.name, "userdomains")
+        with open(log_path, "w") as handle:
+            handle.write("existing log content is intentionally skipped\n")
+        with open(domains_path, "w") as handle:
+            handle.write("example.test: demo\n")
+        values = self.settings.as_dict()
+        values.update(
+            {
+                "email_monitoring_enabled": "true",
+                "email_log_path": log_path,
+                "email_userdomains_path": domains_path,
+                "email_monitor_interval": "5",
+            }
+        )
+        collector = Collector(Settings(values))
+        collector.capture_email_activity(force=True)
+        lines = (
+            "2026-07-15 14:22:01 1uABC-000001 <= sender@example.test H=mail.example.test P=esmtpa A=dovecot_login:sender@example.test S=1234\n"
+            "2026-07-15 14:22:02 1uABC-000002 <= sender@example.test H=mail.example.test P=esmtpa A=dovecot_login:sender@example.test S=1234\n"
+            "2026-07-15 14:22:03 1uABC-000003 <= demo@server.test U=demo P=local S=500\n"
+            "2026-07-15 14:22:04 1uABC-000004 <= outside@remote.test H=remote.test [203.0.113.5] P=esmtp S=900\n"
+        )
+        with open(log_path, "a") as handle:
+            handle.write(lines)
+        collector.capture_email_activity(force=True)
+        rows = collector.conn.execute(
+            "SELECT * FROM email_activity ORDER BY messages DESC"
+        ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum(row["messages"] for row in rows), 3)
+        self.assertEqual(rows[0]["cpanel_user"], "demo")
+        self.assertEqual(rows[0]["email_account"], "sender@example.test")
+        self.assertEqual(rows[0]["messages"], 2)
+        rotated_path = log_path + ".1"
+        os.rename(log_path, rotated_path)
+        with open(log_path, "w") as handle:
+            handle.write(
+                "2026-07-15 14:22:05 1uABC-000005 <= second@example.test "
+                "H=mail.example.test P=esmtpa A=dovecot_login:second@example.test S=700\n"
+            )
+        collector.capture_email_activity(force=True)
+        self.assertEqual(
+            collector.conn.execute(
+                "SELECT SUM(messages) FROM email_activity"
+            ).fetchone()[0],
+            4,
+        )
+        collector.conn.execute(
+            "INSERT INTO email_activity VALUES(?, 'old', 'old@example.test', 9, ?)",
+            (int(time.time()) - 259200, time.time() - 259200),
+        )
+        collector.conn.commit()
+        collector.cleanup(force=True)
+        self.assertEqual(
+            collector.conn.execute(
+                "SELECT COUNT(*) FROM email_activity WHERE cpanel_user = 'old'"
+            ).fetchone()[0],
+            0,
+        )
 
     def test_mysql_user_statistics_deltas(self):
         baseline = parse_mysql_user_statistics(
@@ -249,6 +330,23 @@ http_unique_limit = 100
     def test_cgi_renders_root_dashboard(self):
         collector = Collector(self.settings)
         collector.run_once(force_event=True)
+        scan_ts = time.time()
+        bucket_ts = int(scan_ts // 5) * 5
+        collector.conn.execute(
+            """
+            INSERT INTO email_log_state(path, device, inode, offset, updated_ts, last_error)
+            VALUES('/var/log/exim_mainlog', 1, 1, 100, ?, '')
+            """,
+            (scan_ts,),
+        )
+        collector.conn.execute(
+            """
+            INSERT INTO email_activity(bucket_ts, cpanel_user, email_account, messages, last_seen)
+            VALUES(?, 'demo', 'sender@example.test', 7, ?)
+            """,
+            (bucket_ts, scan_ts),
+        )
+        collector.conn.commit()
         env = dict(os.environ)
         env.update(
             {
@@ -280,6 +378,7 @@ http_unique_limit = 100
         self.assertLess(page.index('id="live-status"'), page.index('</nav>'))
         self.assertIn('href="?view=processes"', page)
         self.assertIn('href="?view=mysql"', page)
+        self.assertIn('href="?view=email"', page)
         self.assertIn('href="?view=events"', page)
         self.assertIn("a,button,summary{cursor:pointer}", page)
         self.assertIn(
@@ -297,6 +396,7 @@ http_unique_limit = 100
         view_expectations = (
             ("processes", 'id="realtime-processes"', 'id="live-process-body"'),
             ("mysql", 'id="mysql-tracker"', 'id="mysql-track-button"'),
+            ("email", 'id="email-activity-body"', 'id="email-history-chart"'),
             ("events", 'id="load-event-history"', "Load event history"),
         )
         for view, first_expected, second_expected in view_expectations:
@@ -317,6 +417,26 @@ http_unique_limit = 100
                 'class="active" aria-current="page" href="?view={}"'.format(view),
                 view_page,
             )
+            if view == "email":
+                self.assertIn("sender@example.test", view_page)
+                self.assertIn('id="email-messages">7</div>', view_page)
+
+        env["QUERY_STRING"] = "action=api-email"
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(SRC, "thorwatch.cgi")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stderr.decode("utf-8", "replace"))
+        response = stdout.decode("utf-8", "replace")
+        self.assertIn("Content-Type: application/json", response)
+        email_payload = __import__("json").loads(response.split("\n\n", 1)[1])
+        self.assertIn("top", email_payload)
+        self.assertIn("series", email_payload)
+        self.assertEqual(email_payload["interval"], 5)
+        self.assertEqual(email_payload["messages"], 7)
 
         env["QUERY_STRING"] = "action=api-live"
         process = subprocess.Popen(

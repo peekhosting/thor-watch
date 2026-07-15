@@ -26,6 +26,7 @@ from thorwatch_common import (
     http_fingerprint,
     load_settings,
     parse_access_line,
+    parse_exim_line,
     process_category,
     render_text_report,
 )
@@ -326,6 +327,9 @@ class Collector(object):
         self.event = None
         self.stop_requested = False
         self.last_cleanup = 0
+        self.last_email_scan = 0
+        self.email_domains = {}
+        self.email_domains_signature = None
         self._interrupt_stale_events()
         if not self.settings.boolean("live_processes_enabled"):
             self.conn.execute("DELETE FROM live_processes")
@@ -644,6 +648,146 @@ class Collector(object):
         )
         self.conn.commit()
 
+    def _load_email_domains(self):
+        path = self.settings.get("email_userdomains_path")
+        try:
+            stat = os.stat(path)
+            signature = (stat.st_dev, stat.st_ino, stat.st_mtime, stat.st_size)
+        except OSError:
+            self.email_domains = {}
+            self.email_domains_signature = None
+            return self.email_domains
+        if signature == self.email_domains_signature:
+            return self.email_domains
+        domains = {}
+        try:
+            with open(path, "r") as handle:
+                for line in handle:
+                    domain, separator, username = line.partition(":")
+                    domain = domain.strip().lower()
+                    username = username.strip().split(None, 1)[0] if separator and username.strip() else ""
+                    if domain and username:
+                        domains[domain] = username[:64]
+        except (IOError, OSError):
+            domains = {}
+        self.email_domains = domains
+        self.email_domains_signature = signature
+        return domains
+
+    def _save_email_log_state(self, path, stat, offset, now, error=""):
+        device = stat.st_dev if stat else 0
+        inode = stat.st_ino if stat else 0
+        cursor = self.conn.execute(
+            """
+            UPDATE email_log_state
+            SET device = ?, inode = ?, offset = ?, updated_ts = ?, last_error = ?
+            WHERE path = ?
+            """,
+            (device, inode, offset, now, error[:800], path),
+        )
+        if not cursor.rowcount:
+            self.conn.execute(
+                """
+                INSERT INTO email_log_state(path, device, inode, offset, updated_ts, last_error)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (path, device, inode, offset, now, error[:800]),
+            )
+        self.conn.commit()
+
+    def capture_email_activity(self, force=False):
+        """Aggregate locally submitted Exim messages into five-second scans."""
+        if not self.settings.boolean("email_monitoring_enabled"):
+            return
+        now = time.time()
+        interval = self.settings.integer("email_monitor_interval")
+        if not force and now - self.last_email_scan < interval:
+            return
+        self.last_email_scan = now
+        path = self.settings.get("email_log_path")
+        state = self.conn.execute(
+            "SELECT * FROM email_log_state WHERE path = ?", (path,)
+        ).fetchone()
+        try:
+            stat = os.stat(path)
+        except OSError as exc:
+            self._save_email_log_state(path, None, state["offset"] if state else 0, now, str(exc))
+            return
+        if not os.path.isfile(path):
+            self._save_email_log_state(path, stat, 0, now, "Configured Exim log is not a regular file")
+            return
+        if not state:
+            self._save_email_log_state(path, stat, stat.st_size, now)
+            return
+        if state["device"] == stat.st_dev and state["inode"] == stat.st_ino and state["offset"] <= stat.st_size:
+            offset = state["offset"]
+        else:
+            offset = 0
+        limit = self.settings.integer("email_read_limit_bytes")
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(offset)
+                chunk = handle.read(limit)
+        except (IOError, OSError) as exc:
+            self._save_email_log_state(path, stat, offset, now, str(exc))
+            return
+        if not chunk:
+            self._save_email_log_state(path, stat, offset, now)
+            return
+        last_newline = chunk.rfind(b"\n")
+        if last_newline < 0:
+            self._save_email_log_state(path, stat, offset, now)
+            return
+        lines = chunk[: last_newline + 1].decode("utf-8", "replace").splitlines()
+        new_offset = offset + last_newline + 1
+        domains = self._load_email_domains()
+        bucket_ts = int(now // interval) * interval
+        aggregate = {}
+        for line in lines:
+            item = parse_exim_line(line)
+            if not item:
+                continue
+            account = item["email_account"].lower()
+            username = item["local_user"]
+            if not username and "@" in account:
+                username = domains.get(account.rsplit("@", 1)[1], "")
+            username = username or "[unmapped]"
+            try:
+                seen_ts = datetime.datetime.strptime(
+                    item["when"], "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                seen_ts = now
+            key = (username[:64], account[:320])
+            if key not in aggregate:
+                aggregate[key] = [0, seen_ts]
+            aggregate[key][0] += 1
+            aggregate[key][1] = max(aggregate[key][1], seen_ts)
+        if aggregate:
+            self.conn.executemany(
+                """
+                INSERT OR IGNORE INTO email_activity(
+                    bucket_ts, cpanel_user, email_account, messages, last_seen
+                ) VALUES(?, ?, ?, 0, ?)
+                """,
+                [
+                    (bucket_ts, username, account, values[1])
+                    for (username, account), values in aggregate.items()
+                ],
+            )
+            self.conn.executemany(
+                """
+                UPDATE email_activity
+                SET messages = messages + ?, last_seen = MAX(last_seen, ?)
+                WHERE bucket_ts = ? AND cpanel_user = ? AND email_account = ?
+                """,
+                [
+                    (values[0], values[1], bucket_ts, username, account)
+                    for (username, account), values in aggregate.items()
+                ],
+            )
+        self._save_email_log_state(path, stat, new_offset, now)
+
     def _find_mysql_client(self):
         if self.mysql_client_path:
             return self.mysql_client_path
@@ -877,6 +1021,7 @@ class Collector(object):
             """,
             (cutoff,),
         )
+        self.conn.execute("DELETE FROM email_activity WHERE bucket_ts < ?", (cutoff,))
         self.conn.commit()
 
     def send_email(self, event_id):
@@ -905,6 +1050,7 @@ class Collector(object):
 
     def run_once(self, force_event=False):
         self.process_mysql_tracking()
+        self.capture_email_activity(force=True)
         first, self.cpu_previous = read_system_snapshot(self.cpu_previous)
         time.sleep(0.2)
         snapshot, self.cpu_previous = read_system_snapshot(self.cpu_previous)
@@ -943,6 +1089,7 @@ class Collector(object):
             mysql_tracking_active = False
             try:
                 mysql_tracking_active = self.process_mysql_tracking()
+                self.capture_email_activity()
                 snapshot, self.cpu_previous = read_system_snapshot(self.cpu_previous)
                 reason = event_reason(snapshot["load1"], snapshot["cpu_busy"], self.settings)
                 if reason and not self.event:
@@ -987,6 +1134,8 @@ class Collector(object):
                 interval = self.settings.integer("normal_interval")
             if mysql_tracking_active:
                 interval = min(interval, 1)
+            if self.settings.boolean("email_monitoring_enabled"):
+                interval = min(interval, self.settings.integer("email_monitor_interval"))
             remaining = max(0.2, interval - (time.monotonic() - started))
             end = time.monotonic() + remaining
             while not self.stop_requested and time.monotonic() < end:

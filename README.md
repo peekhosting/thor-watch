@@ -4,7 +4,7 @@ Thor Watch is a root-only diagnostic WHM plugin for cPanel, CloudLinux, and
 LiteSpeed servers. It keeps lightweight system baselines and automatically
 switches to detailed process and HTTP evidence capture during a load spike.
 
-Version: **0.3.0**
+Version: **0.4.0**
 
 Public project identity:
 
@@ -27,6 +27,8 @@ can upgrade without losing configuration, reports, or service management.
 - AJAX live cards refreshed every three seconds
 - continuously refreshed high-CPU process table with user, PID, elapsed time, category, and command
 - on-demand 60-second Top MySQL Users tracking with query, busy-time, and CPU-time deltas
+- realtime outbound email activity ranked by cPanel user and authenticated email account
+- five-second Exim acceptance counts with a rolling 30-minute sending-rhythm chart
 - responsive rolling load and CPU canvas charts with configured trigger markers
 - TXT, JSON, and process CSV exports for each event
 
@@ -75,6 +77,8 @@ max_event_seconds = 3600
 retention_days = 14
 mysql_tracking_duration = 60
 mysql_tracking_limit = 10
+email_monitoring_enabled = true
+email_monitor_interval = 5
 ```
 
 An event begins when either threshold is met. The collector keeps a small top-20
@@ -83,9 +87,10 @@ process history and access-log correlation are stored only during an event.
 
 ## Top MySQL Users tracker
 
-Click **Track MySQL Users** in the dashboard to start an asynchronous 60-second
-measurement. Thor Watch records a counter snapshot, waits for the configured
-window, records a second snapshot, and ranks the deltas for:
+Open **Logs → Top MySQL users** and click **Track MySQL Users** to start an
+asynchronous 60-second measurement. Thor Watch records a counter snapshot,
+waits for the configured window, records a second snapshot, and ranks the
+deltas for:
 
 - total, SELECT, UPDATE, and OTHER commands
 - MariaDB busy time
@@ -101,6 +106,22 @@ server's normal root socket/default-file authentication. No database password is
 stored by Thor Watch. Set `mysql_client` in the configuration only when the
 client lives elsewhere. Servers without MariaDB `USER_STATISTICS` return a
 visible error in the tracker panel and do not produce a report.
+
+## Realtime email activity
+
+Open **Logs → Realtime email activity** to see locally submitted messages grouped
+into five-second scans. The page ranks the busiest cPanel usernames and email
+accounts, then plots the total accepted-message rhythm for the last 30 minutes.
+
+Thor Watch tails `/var/log/exim_mainlog` incrementally and maps authenticated
+email domains through `/etc/userdomains`. It counts Exim `<=` acceptance records,
+so a message with multiple recipients counts once. Unauthenticated inbound mail
+is excluded. Existing log contents are skipped when monitoring is initialized,
+and log rotation is detected by device/inode changes.
+
+The aggregated email data follows `retention_days` and is removed by the same
+hourly internal cleanup as other Thor Watch history. Email account names are
+sensitive operational data and remain in the root-only SQLite database.
 
 ## Operations
 
@@ -198,6 +219,7 @@ bash uninstall.sh                  # Or: bash uninstall.sh --purge
 - CloudLinux/cPanel-style `/usr/local/apache/domlogs/<user>/` logs
 - Python 3.6 or newer
 - systemd
+- Exim with cPanel's standard `/var/log/exim_mainlog` format for email activity
 - MariaDB with the `userstat` / `INFORMATION_SCHEMA.USER_STATISTICS` feature for MySQL user tracking
 
 The UI and collector use only the Python standard library; there are no pip,

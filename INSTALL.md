@@ -10,6 +10,7 @@ with cPanel AppConfig, and enables the `thorwatch` systemd service.
 - A systemd-based server
 - Python 3.6 or newer at `/usr/bin/python3`
 - Root SSH access
+- Exim with the standard cPanel `/var/log/exim_mainlog` for email monitoring
 - MariaDB `userstat` support for the optional Top MySQL Users tracker
 
 The dashboard and collector have no pip, npm, or other third-party runtime
@@ -51,12 +52,12 @@ dnf install -y git
 
 Versioned release archives and their SHA-256 checksum files are published on
 the [Releases page](https://github.com/peekhosting/thor-watch/releases). Replace
-`0.3.0` below with the release you want to install:
+`0.4.0` below with the release you want to install:
 
 ```bash
 ssh root@YOUR_SERVER_IP
 cd /usr/local/src
-VERSION=0.3.0
+VERSION=0.4.0
 curl -fLO "https://github.com/peekhosting/thor-watch/releases/download/v${VERSION}/thor-watch-${VERSION}.tar.gz"
 curl -fLO "https://github.com/peekhosting/thor-watch/releases/download/v${VERSION}/thor-watch-${VERSION}.sha256"
 sha256sum -c "thor-watch-${VERSION}.sha256"
@@ -118,6 +119,10 @@ cpu_busy_threshold = 25
 normal_interval = 15
 burst_interval = 2
 retention_days = 14
+email_monitoring_enabled = true
+email_log_path = /var/log/exim_mainlog
+email_userdomains_path = /etc/userdomains
+email_monitor_interval = 5
 ```
 
 Apply changes with:

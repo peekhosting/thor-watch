@@ -12,7 +12,7 @@ import re
 import sqlite3
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 DEFAULT_CONFIG = "/etc/thorwatch/thorwatch.conf"
 
 
@@ -42,6 +42,12 @@ DEFAULTS = {
     "mysql_client": "",
     "mysql_tracking_duration": "60",
     "mysql_tracking_limit": "10",
+    "email_monitoring_enabled": "true",
+    "email_log_path": "/var/log/exim_mainlog",
+    "email_userdomains_path": "/etc/userdomains",
+    "email_monitor_interval": "5",
+    "email_read_limit_bytes": "4194304",
+    "email_top_limit": "25",
     "alert_email": "",
     "email_on_close": "false",
 }
@@ -99,6 +105,9 @@ def validate_settings(settings):
         "http_unique_limit",
         "mysql_tracking_duration",
         "mysql_tracking_limit",
+        "email_monitor_interval",
+        "email_read_limit_bytes",
+        "email_top_limit",
     )
     for name in positive_ints:
         if settings.integer(name) <= 0:
@@ -231,12 +240,32 @@ CREATE TABLE IF NOT EXISTS mysql_tracking_results (
     FOREIGN KEY(run_id) REFERENCES mysql_tracking_runs(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS email_activity (
+    bucket_ts INTEGER NOT NULL,
+    cpanel_user TEXT NOT NULL,
+    email_account TEXT NOT NULL,
+    messages INTEGER NOT NULL DEFAULT 0,
+    last_seen REAL NOT NULL,
+    PRIMARY KEY(bucket_ts, cpanel_user, email_account)
+);
+
+CREATE TABLE IF NOT EXISTS email_log_state (
+    path TEXT PRIMARY KEY,
+    device INTEGER NOT NULL DEFAULT 0,
+    inode INTEGER NOT NULL DEFAULT 0,
+    offset INTEGER NOT NULL DEFAULT 0,
+    updated_ts REAL NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);
 CREATE INDEX IF NOT EXISTS idx_samples_event ON samples(event_id, ts);
 CREATE INDEX IF NOT EXISTS idx_process_event ON process_samples(event_id, sample_id);
 CREATE INDEX IF NOT EXISTS idx_process_user ON process_samples(event_id, username);
 CREATE INDEX IF NOT EXISTS idx_http_event ON http_hits(event_id, hits DESC);
 CREATE INDEX IF NOT EXISTS idx_mysql_tracking_status ON mysql_tracking_runs(status, requested_ts);
+CREATE INDEX IF NOT EXISTS idx_email_activity_time ON email_activity(bucket_ts);
+CREATE INDEX IF NOT EXISTS idx_email_activity_rank ON email_activity(bucket_ts, messages DESC);
 """
 
 
@@ -261,7 +290,7 @@ def connect_database(path, read_only=False):
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(SCHEMA)
         conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '3')"
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '4')"
         )
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('app_version', ?)",
@@ -277,6 +306,13 @@ ACCESS_RE = re.compile(
     r'(?P<status>\d{3})\s+\S+(?:\s+"[^"]*"\s+"(?P<ua>[^"]*)")?'
 )
 
+EXIM_RECEIVE_RE = re.compile(
+    r"^(?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)?\s+"
+    r"\S+\s+<=\s+(?P<sender>\S+)"
+)
+EXIM_AUTH_RE = re.compile(r"(?:^|\s)A=[^\s:]+:(?P<account>\S+)")
+EXIM_LOCAL_USER_RE = re.compile(r"(?:^|\s)U=(?P<username>[A-Za-z0-9._-]+)(?:\s|$)")
+
 
 def parse_access_line(line, strip_query=False):
     """Parse a common/combined Apache or LiteSpeed access log line."""
@@ -289,6 +325,26 @@ def parse_access_line(line, strip_query=False):
     item["status"] = int(item["status"])
     item["ua"] = item.get("ua") or "-"
     return item
+
+
+def parse_exim_line(line):
+    """Return one locally submitted Exim message acceptance, excluding inbound mail."""
+    received = EXIM_RECEIVE_RE.match(line)
+    if not received:
+        return None
+    auth = EXIM_AUTH_RE.search(line)
+    local_user = EXIM_LOCAL_USER_RE.search(line)
+    if not auth and not local_user:
+        return None
+    sender = received.group("sender").strip("<>") or "[bounce]"
+    account = auth.group("account") if auth else sender
+    return {
+        "when": received.group("when"),
+        "sender": sender[:320],
+        "email_account": account[:320],
+        "local_user": local_user.group("username")[:64] if local_user else "",
+        "authenticated": bool(auth),
+    }
 
 
 def http_fingerprint(item):

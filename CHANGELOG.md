@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Added a dedicated realtime cPanel/Exim email activity page
+- Added five-second outbound message rankings by cPanel user and email account
+- Added a 30-minute email sending rhythm chart and specialized live API
+- Added incremental Exim log reading with rotation handling and bounded read sizes
+- Added 14-day retention cleanup for aggregated email activity
+
 ## 0.3.0
 
 - Added an AJAX-driven 60-second Top MySQL Users tracker

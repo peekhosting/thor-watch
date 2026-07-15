@@ -143,10 +143,12 @@ animation:pulse 1.8s infinite}.stale .live-dot{background:#e28a20;animation:none
 .mysql-track-summary{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.mysql-track-copy{max-width:850px}.mysql-track-copy p{margin:5px 0 0;color:var(--muted)}
 .track-progress{height:8px;margin:14px 0;background:#e7edf5;border-radius:999px;overflow:hidden}.track-progress span{display:block;width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#16845b,#0d91a8);transition:width .5s}
 .mysql-status{margin:12px 0;color:var(--muted)}.mysql-status strong{color:var(--ink)}.mysql-error{color:var(--red);font-weight:650}.mysql-results{margin-top:10px}
+.email-cards{grid-template-columns:repeat(4,minmax(150px,1fr))}.email-rank{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:7px;background:#e8f0fd;color:#1557ad;font-weight:800}
+.email-share{min-width:120px}.email-share .bar{margin-top:4px}.email-history-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}.email-history-head p{margin:3px 0 0}
 .hidden{display:none!important}
 .site-footer{position:fixed;left:0;right:0;bottom:0;z-index:1000;min-height:40px;padding:10px 18px;background:rgba(255,255,255,.97);
 border-top:1px solid var(--line);box-shadow:0 -2px 12px rgba(23,32,51,.06);color:var(--muted);text-align:center;font-size:12px;backdrop-filter:blur(8px)}
-.site-footer a{color:var(--blue);font-weight:700;text-decoration:none}.site-footer a:hover{text-decoration:underline}@media(max-width:1050px){.cards{grid-template-columns:repeat(3,1fr)}
+.site-footer a{color:var(--blue);font-weight:700;text-decoration:none}.site-footer a:hover{text-decoration:underline}@media(max-width:1050px){.cards{grid-template-columns:repeat(3,1fr)}.email-cards{grid-template-columns:repeat(2,1fr)}
 .grid2{grid-template-columns:1fr}}@media(max-width:650px){.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:repeat(2,1fr)}
 .panel{overflow:auto}.card .value{font-size:21px}.canvas-chart{height:205px}.truncate{max-width:280px}body{padding-top:164px}.top{padding:10px 12px;gap:8px}
 .brand h1{font-size:20px}.brand p{font-size:12px}.logo{width:38px;height:38px}.actions{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}.button{padding:7px 10px}
@@ -164,8 +166,9 @@ def page_start(title, open_event=False, active="overview", refresh_href="?", liv
     overview_attr = ' class="active" aria-current="page"' if active == "overview" else ""
     process_attr = ' class="active" aria-current="page"' if active == "processes" else ""
     mysql_attr = ' class="active" aria-current="page"' if active == "mysql" else ""
+    email_attr = ' class="active" aria-current="page"' if active == "email" else ""
     events_attr = ' class="active" aria-current="page"' if active == "events" else ""
-    logs_class = " active" if active in ("processes", "mysql", "events") else ""
+    logs_class = " active" if active in ("processes", "mysql", "email", "events") else ""
     live_status_html = (
         '<span class="live-pill subnav-live" id="live-status"><span class="live-dot"></span>'
         '<span id="live-status-text">Connecting…</span></span>'
@@ -186,10 +189,12 @@ def page_start(title, open_event=False, active="overview", refresh_href="?", liv
         '<span>Current process activity</span></a>'
         '<a{} href="?view=mysql"><strong>Top MySQL users</strong>'
         '<span>On-demand activity tracker</span></a>'
+        '<a{} href="?view=email"><strong>Realtime email activity</strong>'
+        '<span>Top cPanel users and senders</span></a>'
         '<a{} href="?view=events"><strong>Load event history</strong>'
         '<span>Captured threshold events</span></a>'
         '</div></details>{}</nav></div></header><main class="wrap">'
-        .format(e(refresh_href), overview_attr, logs_class, process_attr, mysql_attr, events_attr, live_status_html)
+        .format(e(refresh_href), overview_attr, logs_class, process_attr, mysql_attr, email_attr, events_attr, live_status_html)
     )
 
 
@@ -277,6 +282,70 @@ def mysql_tracking_data(conn):
     return {"run": dict(run), "results": [dict(row) for row in results]}
 
 
+def email_activity_data(conn, settings):
+    now = time.time()
+    interval = settings.integer("email_monitor_interval")
+    path = settings.get("email_log_path")
+    state = conn.execute(
+        "SELECT * FROM email_log_state WHERE path = ?", (path,)
+    ).fetchone()
+    scan_ts = state["updated_ts"] if state else 0
+    bucket_ts = int(scan_ts // interval) * interval if scan_ts else 0
+    rows = conn.execute(
+        """
+        SELECT cpanel_user, email_account, messages, last_seen
+        FROM email_activity WHERE bucket_ts = ?
+        ORDER BY messages DESC, cpanel_user, email_account LIMIT ?
+        """,
+        (bucket_ts, settings.integer("email_top_limit")),
+    ).fetchall() if bucket_ts else []
+    total = conn.execute(
+        "SELECT COALESCE(SUM(messages), 0) FROM email_activity WHERE bucket_ts = ?",
+        (bucket_ts,),
+    ).fetchone()[0] if bucket_ts else 0
+    counts = conn.execute(
+        """
+        SELECT COUNT(DISTINCT cpanel_user), COUNT(DISTINCT email_account)
+        FROM email_activity WHERE bucket_ts = ?
+        """,
+        (bucket_ts,),
+    ).fetchone() if bucket_ts else (0, 0)
+    start = int((now - 1800) // interval) * interval
+    series_rows = conn.execute(
+        """
+        SELECT bucket_ts, SUM(messages) AS messages
+        FROM email_activity WHERE bucket_ts >= ?
+        GROUP BY bucket_ts ORDER BY bucket_ts
+        """,
+        (start,),
+    ).fetchall()
+    values = {row["bucket_ts"]: row["messages"] for row in series_rows}
+    end = int(now // interval) * interval
+    series = [
+        {"ts": timestamp, "messages": values.get(timestamp, 0)}
+        for timestamp in range(start, end + interval, interval)
+    ]
+    top = [dict(row) for row in rows]
+    return {
+        "version": VERSION,
+        "server_ts": now,
+        "interval": interval,
+        "messages": int(total),
+        "users": counts[0],
+        "accounts": counts[1],
+        "peak": max([row["messages"] for row in series] or [0]),
+        "top": top,
+        "series": series,
+        "monitor": {
+            "enabled": settings.boolean("email_monitoring_enabled"),
+            "path": path,
+            "updated_ts": scan_ts,
+            "lag": (now - scan_ts) if scan_ts else None,
+            "error": state["last_error"] if state else "Waiting for the collector's first Exim scan",
+        },
+    }
+
+
 def start_mysql_tracking(settings):
     if os.environ.get("REQUEST_METHOD", "GET").upper() != "POST":
         headers("application/json; charset=UTF-8", status="405 Method Not Allowed")
@@ -328,6 +397,11 @@ def serve_live_api(conn, settings):
     print(json.dumps(live_data(conn, settings), separators=(",", ":")))
 
 
+def serve_email_api(conn, settings):
+    headers("application/json; charset=UTF-8")
+    print(json.dumps(email_activity_data(conn, settings), separators=(",", ":")))
+
+
 def process_rows(rows):
     if not rows:
         return '<tr><td colspan="8" class="muted">Waiting for the collector process snapshot…</td></tr>'
@@ -363,6 +437,24 @@ def mysql_result_rows(rows):
         )
         for row in rows
     )
+
+
+def email_activity_rows(rows, total):
+    if not rows:
+        return '<tr><td colspan="6" class="muted">No locally submitted messages in the latest scan.</td></tr>'
+    output = []
+    for rank, row in enumerate(rows, 1):
+        share = (100.0 * row["messages"] / total) if total else 0
+        output.append(
+            '<tr><td><span class="email-rank">{}</span></td><td class="mono">{}</td>'
+            '<td class="mono">{}</td><td class="num"><strong>{}</strong></td>'
+            '<td class="email-share"><span>{:.1f}%</span><div class="bar"><span style="width:{:.1f}%"></span></div></td>'
+            '<td>{}</td></tr>'.format(
+                rank, e(row["cpanel_user"]), e(row["email_account"]), row["messages"],
+                share, min(100.0, share), e(local_time(row["last_seen"])),
+            )
+        )
+    return "".join(output)
 
 
 LIVE_JS = r"""
@@ -534,6 +626,53 @@ LIVE_JS = r"""
 """
 
 
+EMAIL_JS = r"""
+(function(){
+  'use strict';
+  var byId=function(id){return document.getElementById(id)},lastPayload=null,lastSuccess=0,inFlight=false;
+  function setText(id,value){var node=byId(id);if(node){node.textContent=value}}
+  function localClock(ts){return ts?new Date(Number(ts)*1000).toLocaleTimeString():'—'}
+  function addCell(row,text,className){var cell=document.createElement('td');cell.textContent=text;if(className){cell.className=className}row.appendChild(cell);return cell}
+  function renderRows(rows,total){
+    var body=byId('email-activity-body');if(!body){return}while(body.firstChild){body.removeChild(body.firstChild)}
+    if(!rows.length){var empty=document.createElement('tr');var cell=addCell(empty,'No locally submitted messages in the latest scan.','muted');cell.colSpan=6;body.appendChild(empty);return}
+    rows.forEach(function(item,index){
+      var row=document.createElement('tr'),rank=addCell(row,String(index+1));rank.innerHTML='<span class="email-rank">'+String(index+1)+'</span>';
+      addCell(row,item.cpanel_user,'mono');addCell(row,item.email_account,'mono');var count=addCell(row,String(item.messages),'num');count.style.fontWeight='750';
+      var share=total?100*Number(item.messages)/total:0,shareCell=addCell(row,share.toFixed(1)+'%','email-share');
+      var bar=document.createElement('div');bar.className='bar';var fill=document.createElement('span');fill.style.width=Math.min(100,share).toFixed(1)+'%';bar.appendChild(fill);shareCell.appendChild(bar);
+      addCell(row,localClock(item.last_seen));body.appendChild(row);
+    });
+  }
+  function drawHistory(canvas,rows){
+    if(!canvas){return}var rect=canvas.getBoundingClientRect(),w=Math.max(320,rect.width),h=Math.max(180,rect.height),dpr=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);var ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+    var left=48,right=16,top=20,bottom=30,pw=w-left-right,ph=h-top-bottom,maxValue=Math.max.apply(null,rows.map(function(row){return Number(row.messages)||0}).concat([1]));
+    ctx.font='11px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';ctx.textBaseline='middle';
+    for(var i=0;i<=4;i++){var y=top+ph*i/4,value=maxValue*(1-i/4);ctx.strokeStyle='#dfe6f0';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.fillStyle='#758197';ctx.textAlign='right';ctx.fillText(String(Math.ceil(value)),left-8,y)}
+    if(rows.length){var step=pw/rows.length,barWidth=Math.max(1,step*.72);rows.forEach(function(row,index){var value=Number(row.messages)||0,height=ph*value/maxValue,x=left+index*step+(step-barWidth)/2;ctx.fillStyle=value?'#1769e0':'#dfe6f0';ctx.fillRect(x,top+ph-height,barWidth,Math.max(value?2:1,height))});
+      var labels=[0,Math.floor((rows.length-1)/2),rows.length-1];ctx.fillStyle='#758197';ctx.textBaseline='top';labels.forEach(function(index,pos){ctx.textAlign=pos===0?'left':(pos===2?'right':'center');ctx.fillText(localClock(rows[index].ts),left+pw*index/Math.max(1,rows.length-1),top+ph+8)})}
+  }
+  function updateStatus(payload,error){
+    var pill=byId('live-status');if(!pill){return}pill.classList.remove('stale','error');
+    if(error){pill.classList.add('error');setText('live-status-text','Email monitor connection error');return}
+    var monitor=payload.monitor||{};if(!monitor.enabled){pill.classList.add('stale');setText('live-status-text','Email monitor disabled');return}
+    if(monitor.error){pill.classList.add('error');setText('live-status-text','Exim log error');return}
+    var age=monitor.lag==null?999:Number(monitor.lag)+(Date.now()-lastSuccess)/1000;if(age>Number(payload.interval||5)*3){pill.classList.add('stale');setText('live-status-text','Email scan delayed · '+Math.round(age)+'s');return}
+    setText('live-status-text','Live · updated '+Math.max(0,Math.round((Date.now()-lastSuccess)/1000))+'s ago');
+  }
+  function render(payload){
+    lastPayload=payload;lastSuccess=Date.now();setText('email-messages',String(payload.messages));setText('email-users',String(payload.users));setText('email-accounts',String(payload.accounts));setText('email-peak',String(payload.peak));
+    setText('email-window','latest '+payload.interval+'-second scan');setText('email-monitor-note',payload.monitor.error?payload.monitor.error:('Reading '+payload.monitor.path+' · last scan '+localClock(payload.monitor.updated_ts)));
+    renderRows(payload.top||[],Number(payload.messages)||0);drawHistory(byId('email-history-chart'),payload.series||[]);updateStatus(payload);
+  }
+  async function poll(){if(inFlight||document.hidden){return}inFlight=true;try{var response=await fetch('?action=api-email&_='+Date.now(),{credentials:'same-origin',cache:'no-store'});if(!response.ok){throw new Error('HTTP '+response.status)}render(await response.json())}catch(error){updateStatus(lastPayload||{},error)}finally{inFlight=false}}
+  window.addEventListener('resize',function(){if(lastPayload){drawHistory(byId('email-history-chart'),lastPayload.series||[])}});document.addEventListener('visibilitychange',function(){if(!document.hidden){poll()}});
+  poll();setInterval(poll,2000);setInterval(function(){if(lastPayload){updateStatus(lastPayload)}},1000);
+})();
+"""
+
+
 def render_dashboard(conn, settings):
     payload = live_data(conn, settings)
     latest = payload["latest"]
@@ -656,6 +795,44 @@ def render_mysql_tracker(conn, settings):
         )
     )
     print("<script>{}</script>".format(LIVE_JS))
+    page_end()
+
+
+def render_email_activity(conn, settings):
+    payload = email_activity_data(conn, settings)
+    monitor = payload["monitor"]
+    if monitor["error"]:
+        monitor_note = monitor["error"]
+    elif monitor["updated_ts"]:
+        monitor_note = "Reading {} · last scan {}".format(
+            monitor["path"], local_time(monitor["updated_ts"])
+        )
+    else:
+        monitor_note = "Waiting for the first Exim scan"
+    page_start(
+        "Thor Watch - Realtime email activity",
+        False,
+        active="email",
+        refresh_href="?view=email",
+        live_status=True,
+    )
+    print('<div class="live-head"><div><strong>Realtime email activity</strong>')
+    print('<div class="ajax-note">Outbound Exim acceptances grouped into {}-second scans · inbound unauthenticated mail is excluded</div></div></div>'.format(payload["interval"]))
+    print('<div class="cards email-cards">')
+    print(card("Messages", payload["messages"], "latest {}-second scan".format(payload["interval"]), "email-messages", "email-window"))
+    print(card("Active cPanel users", payload["users"], "sending in latest scan", "email-users"))
+    print(card("Active email accounts", payload["accounts"], "authenticated/local senders", "email-accounts"))
+    print(card("Peak {}-second volume".format(payload["interval"]), payload["peak"], "during last 30 minutes", "email-peak"))
+    print('</div>')
+    print('<div class="panel"><div class="live-head"><div><h2>Top email senders</h2>')
+    print('<div class="ajax-note" id="email-monitor-note">{}</div></div><span class="ajax-note">ranked by accepted messages</span></div>'.format(e(monitor_note)))
+    print('<table><thead><tr><th>Rank</th><th>cPanel User</th><th>Email Account / Sender</th><th class="num">Messages / {}s</th><th>Share</th><th>Last Activity</th></tr></thead>'.format(payload["interval"]))
+    print('<tbody id="email-activity-body">{}</tbody></table></div>'.format(email_activity_rows(payload["top"], payload["messages"])))
+    print('<div class="panel"><div class="email-history-head"><div><h2>Email sending rhythm · last 30 minutes</h2>')
+    print('<p class="muted">Each bar is one {}-second Exim acceptance scan. Peaks reveal bursts and high-volume senders.</p></div>'.format(payload["interval"]))
+    print('<span class="ajax-note">accepted messages, not recipient deliveries</span></div>')
+    print('<canvas class="canvas-chart" id="email-history-chart" aria-label="Email sending rhythm over the last 30 minutes"></canvas></div>')
+    print("<script>{}</script>".format(EMAIL_JS))
     page_end()
 
 
@@ -799,6 +976,8 @@ def main():
     event_id = parse_event_id(query)
     if action == "api-live":
         serve_live_api(conn, settings)
+    elif action == "api-email":
+        serve_email_api(conn, settings)
     elif action == "mysql-track-start":
         start_mysql_tracking(settings)
     elif action == "export-latest":
@@ -821,6 +1000,8 @@ def main():
         render_processes(conn, settings)
     elif view == "mysql":
         render_mysql_tracker(conn, settings)
+    elif view == "email":
+        render_email_activity(conn, settings)
     elif view == "events":
         render_event_history(conn)
     else:

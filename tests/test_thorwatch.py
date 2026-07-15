@@ -275,22 +275,45 @@ http_unique_limit = 100
         self.assertIn('<footer class="site-footer">', page)
         self.assertIn('aria-label="Thor Watch sections"', page)
         self.assertIn('<summary>Logs ', page)
-        self.assertIn('href="?#realtime-processes"', page)
-        self.assertIn('href="?#mysql-tracker"', page)
-        self.assertIn('href="?#load-event-history"', page)
-        self.assertIn('id="realtime-processes"', page)
-        self.assertIn('id="load-event-history"', page)
+        self.assertIn('href="?view=processes"', page)
+        self.assertIn('href="?view=mysql"', page)
+        self.assertIn('href="?view=events"', page)
+        self.assertIn("a,button,summary{cursor:pointer}", page)
         self.assertIn(
             'href="https://www.peekhosting.com" target="_blank" rel="noopener noreferrer">PEEK Hosting</a>',
             page,
         )
         self.assertIn('id="load-chart"', page)
         self.assertIn('id="cpu-chart"', page)
-        self.assertIn('id="live-process-body"', page)
-        self.assertIn('id="mysql-track-button"', page)
-        self.assertIn('id="mysql-result-body"', page)
-        self.assertIn("Top MySQL users", page)
+        self.assertNotIn('id="realtime-processes"', page)
+        self.assertNotIn('id="live-process-body"', page)
+        self.assertNotIn('id="mysql-track-button"', page)
+        self.assertNotIn('id="load-event-history"', page)
         self.assertIn("?action=api-live", page)
+
+        view_expectations = (
+            ("processes", 'id="realtime-processes"', 'id="live-process-body"'),
+            ("mysql", 'id="mysql-tracker"', 'id="mysql-track-button"'),
+            ("events", 'id="load-event-history"', "Load event history"),
+        )
+        for view, first_expected, second_expected in view_expectations:
+            env["QUERY_STRING"] = "view={}".format(view)
+            process = subprocess.Popen(
+                [sys.executable, os.path.join(SRC, "thorwatch.cgi")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            stdout, stderr = process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 0, stderr.decode("utf-8", "replace"))
+            view_page = stdout.decode("utf-8", "replace")
+            self.assertIn(first_expected, view_page)
+            self.assertIn(second_expected, view_page)
+            self.assertIn('href="?view={}">Refresh</a>'.format(view), view_page)
+            self.assertIn(
+                'class="active" aria-current="page" href="?view={}"'.format(view),
+                view_page,
+            )
 
         env["QUERY_STRING"] = "action=api-live"
         process = subprocess.Popen(

@@ -115,6 +115,7 @@ background:#fff;color:var(--ink);text-decoration:none;font-weight:600}.button.pr
 .subnav-shell{border-top:1px solid var(--line);background:#f8faff}.subnav{max-width:1440px;margin:0 auto;padding:5px 22px;display:flex;align-items:center;gap:4px}
 .subnav a,.log-menu summary{display:flex;align-items:center;min-height:30px;padding:5px 10px;border-radius:7px;color:var(--ink);font-size:13px;font-weight:650;text-decoration:none;cursor:pointer}
 .subnav>a:hover,.subnav>a:focus-visible,.subnav>a.active,.log-menu summary:hover,.log-menu summary:focus-visible,.log-menu[open] summary,.log-menu.active summary{background:#e8f0fd;color:#1557ad;outline:none}
+.subnav-live{flex:0 0 auto;margin-left:auto;white-space:nowrap}
 .log-menu{position:relative}.log-menu summary{list-style:none}.log-menu summary::-webkit-details-marker{display:none}.menu-caret{margin-left:6px;color:var(--muted);font-size:10px;transition:transform .15s}
 .log-menu[open] .menu-caret{transform:rotate(180deg)}.logs-dropdown{position:absolute;top:calc(100% + 7px);left:0;width:285px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:10px;
 box-shadow:0 12px 28px rgba(23,32,51,.16)}.logs-dropdown a{display:block;padding:9px 10px}.logs-dropdown a:hover,.logs-dropdown a:focus-visible,.logs-dropdown a.active{background:#f0f5fc;color:#1557ad;outline:none}
@@ -153,7 +154,7 @@ border-top:1px solid var(--line);box-shadow:0 -2px 12px rgba(23,32,51,.06);color
 """
 
 
-def page_start(title, open_event=False, active="overview", refresh_href="?"):
+def page_start(title, open_event=False, active="overview", refresh_href="?", live_status=False):
     headers()
     refresh = "true" if open_event else "false"
     print("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
@@ -165,6 +166,11 @@ def page_start(title, open_event=False, active="overview", refresh_href="?"):
     mysql_attr = ' class="active" aria-current="page"' if active == "mysql" else ""
     events_attr = ' class="active" aria-current="page"' if active == "events" else ""
     logs_class = " active" if active in ("processes", "mysql", "events") else ""
+    live_status_html = (
+        '<span class="live-pill subnav-live" id="live-status"><span class="live-dot"></span>'
+        '<span id="live-status-text">Connecting…</span></span>'
+        if live_status else ""
+    )
     print(
         '<div class="top"><div class="brand"><div class="logo">TW</div><div>'
         '<h1>Thor Watch</h1><p>WHM Load Investigator</p></div></div>'
@@ -182,8 +188,8 @@ def page_start(title, open_event=False, active="overview", refresh_href="?"):
         '<span>On-demand activity tracker</span></a>'
         '<a{} href="?view=events"><strong>Load event history</strong>'
         '<span>Captured threshold events</span></a>'
-        '</div></details></nav></div></header><main class="wrap">'
-        .format(e(refresh_href), overview_attr, logs_class, process_attr, mysql_attr, events_attr)
+        '</div></details>{}</nav></div></header><main class="wrap">'
+        .format(e(refresh_href), overview_attr, logs_class, process_attr, mysql_attr, events_attr, live_status_html)
     )
 
 
@@ -532,15 +538,14 @@ def render_dashboard(conn, settings):
     payload = live_data(conn, settings)
     latest = payload["latest"]
     open_event = payload["active_event"]
-    page_start("Thor Watch - Load Investigator", False)
+    page_start("Thor Watch - Load Investigator", False, live_status=True)
     collector_interval = min(
         settings.integer("normal_interval"), settings.integer("live_process_interval")
     )
     print(
         '<div class="live-head"><div><strong>Realtime server health</strong>'
         '<div class="ajax-note">AJAX refresh every 3 seconds · collector snapshot every {} seconds</div></div>'
-        '<span class="live-pill" id="live-status"><span class="live-dot"></span>'
-        '<span id="live-status-text">Connecting…</span></span></div>'.format(collector_interval)
+        '</div>'.format(collector_interval)
     )
     if latest:
         print('<div class="cards">')
@@ -594,12 +599,12 @@ def render_processes(conn, settings):
         False,
         active="processes",
         refresh_href="?view=processes",
+        live_status=True,
     )
     print(
         '<div class="live-head"><div><strong>Realtime high-CPU processes</strong>'
         '<div class="ajax-note">AJAX refresh every 3 seconds · collector snapshot every {} seconds</div></div>'
-        '<span class="live-pill" id="live-status"><span class="live-dot"></span>'
-        '<span id="live-status-text">Connecting…</span></span></div>'.format(collector_interval)
+        '</div>'.format(collector_interval)
     )
     print('<div class="panel" id="realtime-processes"><div class="live-head"><h2>Current process activity</h2><span class="ajax-note" id="process-snapshot-time">snapshot {}</span></div>'.format(e(process_time)))
     print('<table class="live-processes"><thead><tr><th>User</th><th class="num">PID</th><th class="num">CPU</th><th class="num">Memory</th><th>Elapsed</th><th>State</th><th>Category</th><th>Command / PHP script</th></tr></thead>')
@@ -628,6 +633,7 @@ def render_mysql_tracker(conn, settings):
         False,
         active="mysql",
         refresh_href="?view=mysql",
+        live_status=True,
     )
     print(
         '<div class="panel" id="mysql-tracker"><div class="mysql-track-summary">'

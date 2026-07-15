@@ -273,6 +273,13 @@ http_unique_limit = 100
         self.assertIn('href="../../" target="_top">← Back to WHM</a>', page)
         self.assertIn('<header class="site-header">', page)
         self.assertIn('<footer class="site-footer">', page)
+        self.assertIn('aria-label="Thor Watch sections"', page)
+        self.assertIn('<summary>Logs ', page)
+        self.assertIn('href="?#realtime-processes"', page)
+        self.assertIn('href="?#mysql-tracker"', page)
+        self.assertIn('href="?#load-event-history"', page)
+        self.assertIn('id="realtime-processes"', page)
+        self.assertIn('id="load-event-history"', page)
         self.assertIn(
             'href="https://www.peekhosting.com" target="_blank" rel="noopener noreferrer">PEEK Hosting</a>',
             page,

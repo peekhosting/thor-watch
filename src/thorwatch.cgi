@@ -103,7 +103,7 @@ def svg_sparkline(samples, key, color, ceiling=None):
 CSS = r"""
 :root{--bg:#f3f6fa;--panel:#fff;--ink:#172033;--muted:#67738a;--line:#dce3ed;
 --blue:#1769e0;--cyan:#0d91a8;--orange:#e57a18;--red:#c9364a;--green:#16845b}
-*{box-sizing:border-box}body{margin:0;padding:86px 0 48px;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,
+html{scroll-behavior:smooth}*{box-sizing:border-box}body{margin:0;padding:126px 0 48px;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,
 BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1440px;margin:0 auto;padding:22px}.site-header{position:fixed;top:0;left:0;right:0;
 z-index:1000;background:rgba(255,255,255,.97);border-bottom:1px solid var(--line);box-shadow:0 2px 12px rgba(23,32,51,.08);backdrop-filter:blur(8px)}
 .top{max-width:1440px;margin:0 auto;padding:12px 22px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:12px}
@@ -112,6 +112,13 @@ display:grid;place-items:center;font-weight:800}.brand h1{font-size:24px;margin:
 .actions{display:flex;gap:8px;flex-wrap:wrap}.button{display:inline-block;padding:8px 12px;border-radius:8px;border:1px solid var(--line);white-space:nowrap;
 background:#fff;color:var(--ink);text-decoration:none;font-weight:600}.button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .button:disabled{cursor:not-allowed;opacity:.58}.button.track{border:0;background:linear-gradient(135deg,#16845b,#0d91a8);color:#fff;box-shadow:0 4px 12px rgba(13,145,168,.18)}
+.subnav-shell{border-top:1px solid var(--line);background:#f8faff}.subnav{max-width:1440px;margin:0 auto;padding:5px 22px;display:flex;align-items:center;gap:4px}
+.subnav a,.log-menu summary{display:flex;align-items:center;min-height:30px;padding:5px 10px;border-radius:7px;color:var(--ink);font-size:13px;font-weight:650;text-decoration:none;cursor:pointer}
+.subnav>a:hover,.subnav>a:focus-visible,.log-menu summary:hover,.log-menu summary:focus-visible,.log-menu[open] summary{background:#e8f0fd;color:#1557ad;outline:none}
+.log-menu{position:relative}.log-menu summary{list-style:none}.log-menu summary::-webkit-details-marker{display:none}.menu-caret{margin-left:6px;color:var(--muted);font-size:10px;transition:transform .15s}
+.log-menu[open] .menu-caret{transform:rotate(180deg)}.logs-dropdown{position:absolute;top:calc(100% + 7px);left:0;width:285px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:10px;
+box-shadow:0 12px 28px rgba(23,32,51,.16)}.logs-dropdown a{display:block;padding:9px 10px}.logs-dropdown a:hover,.logs-dropdown a:focus-visible{background:#f0f5fc;color:#1557ad;outline:none}
+.logs-dropdown strong{display:block;font-size:13px}.logs-dropdown span{display:block;margin-top:1px;color:var(--muted);font-size:11px;font-weight:400}.section-anchor{scroll-margin-top:136px}
 .cards{display:grid;grid-template-columns:repeat(6,minmax(130px,1fr));gap:12px;margin-bottom:16px}.card,.panel{background:var(--panel);
 border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(23,32,51,.04)}.card{padding:14px}.card .label{color:var(--muted);
 font-size:12px;text-transform:uppercase;letter-spacing:.04em}.card .value{font-size:25px;font-weight:750;margin-top:3px}.card .sub{color:var(--muted);font-size:12px}
@@ -140,8 +147,9 @@ animation:pulse 1.8s infinite}.stale .live-dot{background:#e28a20;animation:none
 border-top:1px solid var(--line);box-shadow:0 -2px 12px rgba(23,32,51,.06);color:var(--muted);text-align:center;font-size:12px;backdrop-filter:blur(8px)}
 .site-footer a{color:var(--blue);font-weight:700;text-decoration:none}.site-footer a:hover{text-decoration:underline}@media(max-width:1050px){.cards{grid-template-columns:repeat(3,1fr)}
 .grid2{grid-template-columns:1fr}}@media(max-width:650px){.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:repeat(2,1fr)}
-.panel{overflow:auto}.card .value{font-size:21px}.canvas-chart{height:205px}.truncate{max-width:280px}body{padding-top:122px}.top{padding:10px 12px;gap:8px}
-.brand h1{font-size:20px}.brand p{font-size:12px}.logo{width:38px;height:38px}.actions{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}.button{padding:7px 10px}}
+.panel{overflow:auto}.card .value{font-size:21px}.canvas-chart{height:205px}.truncate{max-width:280px}body{padding-top:164px}.top{padding:10px 12px;gap:8px}
+.brand h1{font-size:20px}.brand p{font-size:12px}.logo{width:38px;height:38px}.actions{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}.button{padding:7px 10px}
+.subnav{padding:5px 12px}.logs-dropdown{position:fixed;top:148px;left:12px;right:12px;width:auto}.section-anchor{scroll-margin-top:174px}}
 """
 
 
@@ -158,7 +166,18 @@ def page_start(title, open_event=False):
         '<div class="actions"><a class="button" href="../../" target="_top">← Back to WHM</a>'
         '<a class="button" href="?">Thor Watch Dashboard</a>'
         '<a class="button" href="?action=export-latest&amp;format=txt">Latest report</a>'
-        '<a class="button primary" href="?">Refresh</a></div></div></header><main class="wrap">'
+        '<a class="button primary" href="?">Refresh</a></div></div>'
+        '<div class="subnav-shell"><nav class="subnav" aria-label="Thor Watch sections">'
+        '<a href="?">Overview</a><a href="?#load-trends">Trends</a>'
+        '<details class="log-menu"><summary>Logs <span class="menu-caret" aria-hidden="true">&#9662;</span></summary>'
+        '<div class="logs-dropdown">'
+        '<a href="?#realtime-processes"><strong>Realtime high-CPU processes</strong>'
+        '<span>Current process activity</span></a>'
+        '<a href="?#mysql-tracker"><strong>Top MySQL users</strong>'
+        '<span>On-demand activity tracker</span></a>'
+        '<a href="?#load-event-history"><strong>Load event history</strong>'
+        '<span>Captured threshold events</span></a>'
+        '</div></details></nav></div></header><main class="wrap">'
     )
 
 
@@ -547,7 +566,7 @@ def render_dashboard(conn, settings):
     print('<p><span class="status open">LIVE</span> <span id="active-event-info">{}</span></p>'.format(e(info)))
     print('<a class="button primary" id="active-event-link" href="{}">Open live report</a></div>'.format(e(href)))
     print(
-        '<div class="grid2"><div class="panel"><h2>Realtime load trend · last 30 minutes</h2>'
+        '<div class="grid2 section-anchor" id="load-trends"><div class="panel"><h2>Realtime load trend · last 30 minutes</h2>'
         '<canvas class="canvas-chart" id="load-chart" aria-label="Load average chart"></canvas>'
         '<div class="legend"><span><i style="background:#1769e0"></i>Load 1</span>'
         '<span><i style="background:#0d91a8"></i>Load 5</span><span><i style="background:#e57a18"></i>Load 15</span></div></div>'
@@ -557,7 +576,7 @@ def render_dashboard(conn, settings):
         '<span><i style="background:#7559d9"></i>I/O wait</span><span><i style="background:#d59b15"></i>Steal</span></div></div></div>'
     )
     process_time = local_time(live_processes[0]["updated_ts"]) if live_processes else "waiting"
-    print('<div class="panel"><div class="live-head"><h2>Realtime high-CPU processes</h2><span class="ajax-note" id="process-snapshot-time">snapshot {}</span></div>'.format(e(process_time)))
+    print('<div class="panel section-anchor" id="realtime-processes"><div class="live-head"><h2>Realtime high-CPU processes</h2><span class="ajax-note" id="process-snapshot-time">snapshot {}</span></div>'.format(e(process_time)))
     print('<table class="live-processes"><thead><tr><th>User</th><th class="num">PID</th><th class="num">CPU</th><th class="num">Memory</th><th>Elapsed</th><th>State</th><th>Category</th><th>Command / PHP script</th></tr></thead>')
     print('<tbody id="live-process-body">{}</tbody></table></div>'.format(process_rows(live_processes)))
     mysql_run = mysql_tracking["run"]
@@ -574,7 +593,7 @@ def render_dashboard(conn, settings):
     else:
         mysql_status = "{}: {}".format(mysql_run["status"].title(), mysql_run["error_message"] or "Unknown tracking error")
     print(
-        '<div class="panel" id="mysql-tracker"><div class="mysql-track-summary">'
+        '<div class="panel section-anchor" id="mysql-tracker"><div class="mysql-track-summary">'
         '<div class="mysql-track-copy"><h2>Top MySQL users · on-demand tracker</h2>'
         '<p>Measures per-user MariaDB query, busy-time, and CPU-time deltas for an isolated '
         '{}-second window. Existing counters are not flushed.</p></div>'
@@ -593,7 +612,7 @@ def render_dashboard(conn, settings):
             mysql_result_rows(mysql_tracking["results"]),
         )
     )
-    print('<div class="panel"><h2>Load event history</h2>')
+    print('<div class="panel section-anchor" id="load-event-history"><h2>Load event history</h2>')
     if not events:
         print('<p class="muted">No threshold events have been captured yet.</p>')
     else:

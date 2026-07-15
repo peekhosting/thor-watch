@@ -152,16 +152,44 @@ Thor Watch invokes `/usr/sbin/sendmail` directly without a shell.
 
 ## Uninstall
 
-Preserve captured data and configuration:
+Run the uninstaller as `root` **from the cloned or extracted Thor Watch project
+folder**. The uninstaller is not copied into `/usr/local/thorwatch`.
+
+If you installed from the downloadable `thor-watch-main.tar.gz` archive:
 
 ```bash
+cd /usr/local/src/thor-watch-main
 bash uninstall.sh
 ```
 
-Remove everything:
+If you installed with `git clone`:
 
 ```bash
+cd /usr/local/src/thor-watch
+bash uninstall.sh
+```
+
+These commands remove the service, collector, and WHM plugin while preserving
+the configuration in `/etc/thorwatch` and reports in `/var/lib/thorwatch`.
+
+To remove everything, including the configuration and captured reports, enter
+the same project folder and add `--purge`:
+
+```bash
+cd /usr/local/src/thor-watch-main  # Use thor-watch for a Git installation
 bash uninstall.sh --purge
+```
+
+If the original project folder no longer exists, download it again before
+uninstalling:
+
+```bash
+cd /usr/local/src
+curl -fL https://github.com/peekhosting/thor-watch/archive/refs/heads/main.tar.gz \
+  -o thor-watch-main.tar.gz
+tar -xzf thor-watch-main.tar.gz
+cd thor-watch-main
+bash uninstall.sh                  # Or: bash uninstall.sh --purge
 ```
 
 ## Compatibility

@@ -36,12 +36,16 @@ root user clicks the tracking button, then restores its previous state.
 
 ## Install
 
-Install the current version directly from GitHub as `root`:
+**Download:** [thor-watch-main.tar.gz](https://github.com/peekhosting/thor-watch/archive/refs/heads/main.tar.gz)
+
+Download and install the current version directly from GitHub as `root`:
 
 ```bash
 cd /usr/local/src
-git clone https://github.com/peekhosting/thor-watch.git
-cd thor-watch
+curl -fL https://github.com/peekhosting/thor-watch/archive/refs/heads/main.tar.gz \
+  -o thor-watch-main.tar.gz
+tar -xzf thor-watch-main.tar.gz
+cd thor-watch-main
 bash install.sh
 ```
 

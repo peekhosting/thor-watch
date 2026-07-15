@@ -145,18 +145,33 @@ directory, and run `bash install.sh` again.
 
 ## Uninstall
 
-From a Thor Watch source or release directory, preserve configuration and
-captured data while removing the service and WHM plugin:
+Run the uninstaller as `root` from the cloned or extracted project directory.
+For an installation made from the current source archive:
 
 ```bash
+cd /usr/local/src/thor-watch-main
 bash uninstall.sh
 ```
 
-Remove the service, plugin, configuration, and all captured data:
+For a Git installation:
+
+```bash
+cd /usr/local/src/thor-watch
+bash uninstall.sh
+```
+
+This preserves `/etc/thorwatch` and `/var/lib/thorwatch`. To also delete the
+configuration and all captured reports, enter the same project directory and
+run:
 
 ```bash
 bash uninstall.sh --purge
 ```
+
+The uninstaller is not copied to `/usr/local/thorwatch`. If the source project
+directory was deleted, download and extract the current archive again using
+[Option 1](#option-1-download-the-current-source-archive), enter the resulting
+`thor-watch-main` directory, and then run the appropriate uninstall command.
 
 ## Troubleshooting
 

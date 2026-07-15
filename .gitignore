@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.tar.gz
+*.zip
+dist/
+.DS_Store
+.idea/
+.vscode/

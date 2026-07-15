@@ -1,0 +1,26 @@
+[Unit]
+Description=Thor Watch adaptive WHM load investigator
+After=local-fs.target
+ConditionPathExists=/etc/thorwatch/thorwatch.conf
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/usr/local/thorwatch
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/thorwatch/lib
+ExecStart=/usr/bin/python3 /usr/local/thorwatch/bin/thorwatch_collector.py --config /etc/thorwatch/thorwatch.conf
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/thorwatch
+
+[Install]
+WantedBy=multi-user.target

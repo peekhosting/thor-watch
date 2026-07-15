@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test
+        run: ./tests/run.sh
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_VERSION="$(PYTHONPATH=src python3 -c 'from thorwatch_common import VERSION; print(VERSION)')"
+          test "${VERSION}" = "${SOURCE_VERSION}"
+          mkdir -p dist
+          tar --exclude=.git --exclude=dist --exclude='*.tar.gz' \
+            --exclude='*/__pycache__' --exclude='*.py[cod]' \
+            --transform="s,^\.,thor-watch-${VERSION}," \
+            -czf "dist/thor-watch-${VERSION}.tar.gz" .
+          cd dist
+          sha256sum "thor-watch-${VERSION}.tar.gz" > "thor-watch-${VERSION}.sha256"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "Thor Watch ${GITHUB_REF_NAME}" \
+            --generate-notes

@@ -35,6 +35,7 @@ from thorwatch_common import (
 LOG = logging.getLogger("thorwatch.collector")
 CLK_TCK = float(os.sysconf(os.sysconf_names["SC_CLK_TCK"]))
 PAGE_SIZE = float(os.sysconf("SC_PAGE_SIZE"))
+LONG_RUNNING_MIN_SECONDS = 30 * 86400
 
 MYSQL_USER_STATS_SQL = """
 SELECT
@@ -212,6 +213,7 @@ class ProcessReader(object):
         self.previous = {}
         self.previous_time = None
         self.user_cache = {}
+        self.candidates = []
 
     def username(self, uid):
         if uid not in self.user_cache:
@@ -253,7 +255,7 @@ class ProcessReader(object):
             pass
         return "[{}]".format(comm)
 
-    def read(self, limit, minimum_cpu, mem_total_kb):
+    def scan(self, mem_total_kb):
         now_mono = time.monotonic()
         uptime = read_uptime()
         interval = (now_mono - self.previous_time) if self.previous_time is not None else None
@@ -294,16 +296,34 @@ class ProcessReader(object):
         self.previous = current
         self.previous_time = now_mono
         candidates.sort(key=lambda row: (row["cpu_pct"], row["elapsed"]), reverse=True)
+        self.candidates = candidates
+        return candidates
+
+    def _complete(self, item):
+        item = dict(item)
+        if "args" not in item:
+            item["args"] = self._read_args(item["pid"], item["comm"])
+        if "category" not in item:
+            item["category"] = process_category(item["comm"], item["args"])
+        return item
+
+    def read(self, limit, minimum_cpu, mem_total_kb):
+        candidates = self.scan(mem_total_kb)
         selected = []
         for item in candidates:
             if len(selected) >= limit:
                 break
             if item["cpu_pct"] < minimum_cpu and selected:
                 break
-            item["args"] = self._read_args(item["pid"], item["comm"])
-            item["category"] = process_category(item["comm"], item["args"])
-            selected.append(item)
+            selected.append(self._complete(item))
         return selected
+
+    def long_running(self, minimum_elapsed, limit):
+        candidates = [
+            item for item in self.candidates if item["elapsed"] >= minimum_elapsed
+        ]
+        candidates.sort(key=lambda row: (row["elapsed"], row["pid"]), reverse=True)
+        return [self._complete(item) for item in candidates[:limit]]
 
 
 class EventState(object):
@@ -333,6 +353,9 @@ class Collector(object):
         self._interrupt_stale_events()
         if not self.settings.boolean("live_processes_enabled"):
             self.conn.execute("DELETE FROM live_processes")
+            self.conn.commit()
+        if not self.settings.boolean("long_running_processes_enabled"):
+            self.conn.execute("DELETE FROM long_running_processes")
             self.conn.commit()
 
     def _interrupt_stale_events(self):
@@ -482,6 +505,43 @@ class Collector(object):
             self.conn.executemany(
                 """
                 INSERT INTO live_processes(
+                    rank, updated_ts, pid, ppid, username, state, elapsed,
+                    cpu_pct, mem_pct, comm, category, args
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        self.conn.commit()
+
+    def write_long_running_processes(self, processes, updated_ts):
+        """Replace the current snapshot of processes aged 30 days or longer."""
+        self.conn.execute("DELETE FROM long_running_processes")
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('long_running_updated_ts', ?)",
+            (str(updated_ts),),
+        )
+        if processes:
+            rows = []
+            for rank, item in enumerate(processes, 1):
+                rows.append(
+                    (
+                        rank,
+                        updated_ts,
+                        item["pid"],
+                        item["ppid"],
+                        item["username"],
+                        item["state"],
+                        item["elapsed"],
+                        item["cpu_pct"],
+                        item["mem_pct"],
+                        item["comm"],
+                        item["category"],
+                        item["args"],
+                    )
+                )
+            self.conn.executemany(
+                """
+                INSERT INTO long_running_processes(
                     rank, updated_ts, pid, ppid, username, state, elapsed,
                     cpu_pct, mem_pct, comm, category, args
                 ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1066,6 +1126,12 @@ class Collector(object):
             )
             self.write_sample(snapshot, processes)
             self.write_live_processes(processes, snapshot["ts"])
+            if self.settings.boolean("long_running_processes_enabled"):
+                long_running = self.process_reader.long_running(
+                    LONG_RUNNING_MIN_SECONDS,
+                    self.settings.integer("long_running_process_limit"),
+                )
+                self.write_long_running_processes(long_running, snapshot["ts"])
             self.capture_access_logs(force=True)
             self.close_event("test" if force_event else "closed")
         else:
@@ -1076,9 +1142,17 @@ class Collector(object):
                     self.settings.floating("live_process_cpu_threshold"),
                     snapshot["mem_total_kb"],
                 )
+            elif self.settings.boolean("long_running_processes_enabled"):
+                self.process_reader.scan(snapshot["mem_total_kb"])
             self.write_sample(snapshot)
             if processes is not None:
                 self.write_live_processes(processes, snapshot["ts"])
+            if self.settings.boolean("long_running_processes_enabled"):
+                long_running = self.process_reader.long_running(
+                    LONG_RUNNING_MIN_SECONDS,
+                    self.settings.integer("long_running_process_limit"),
+                )
+                self.write_long_running_processes(long_running, snapshot["ts"])
         self.cleanup(force=True)
         return snapshot
 
@@ -1109,9 +1183,17 @@ class Collector(object):
                         self.settings.floating("live_process_cpu_threshold"),
                         snapshot["mem_total_kb"],
                     )
+                elif self.settings.boolean("long_running_processes_enabled"):
+                    self.process_reader.scan(snapshot["mem_total_kb"])
                 self.write_sample(snapshot, processes)
                 if processes is not None:
                     self.write_live_processes(processes, snapshot["ts"])
+                if self.settings.boolean("long_running_processes_enabled"):
+                    long_running = self.process_reader.long_running(
+                        LONG_RUNNING_MIN_SECONDS,
+                        self.settings.integer("long_running_process_limit"),
+                    )
+                    self.write_long_running_processes(long_running, snapshot["ts"])
                 if self.event:
                     self.capture_access_logs()
                     event_age = snapshot["ts"] - self.event.start_ts

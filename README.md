@@ -4,7 +4,7 @@ Thor Watch is a root-only diagnostic WHM plugin for cPanel, CloudLinux, and
 LiteSpeed servers. It keeps lightweight system baselines and automatically
 switches to detailed process and HTTP evidence capture during a load spike.
 
-Version: **0.4.0**
+Version: **0.5.0**
 
 Public project identity:
 
@@ -26,6 +26,7 @@ can upgrade without losing configuration, reports, or service management.
 - source IP, domain/log, URI, status, and User-Agent correlation from cPanel domlogs
 - AJAX live cards refreshed every three seconds
 - continuously refreshed high-CPU process table with user, PID, elapsed time, category, and command
+- long-running process finder with current 30+ and 60+ day views, sorted oldest first
 - on-demand 60-second Top MySQL Users tracking with query, busy-time, and CPU-time deltas
 - realtime outbound email activity ranked by cPanel user and authenticated email account
 - five-second Exim acceptance counts with a rolling 30-minute sending-rhythm chart
@@ -72,6 +73,8 @@ normal_interval = 15
 burst_interval = 2
 live_processes_enabled = true
 live_process_interval = 5
+long_running_processes_enabled = true
+long_running_process_limit = 200
 burst_hold_seconds = 180
 max_event_seconds = 3600
 retention_days = 14
@@ -84,6 +87,15 @@ email_monitor_interval = 5
 An event begins when either threshold is met. The collector keeps a small top-20
 process snapshot for the realtime dashboard every five seconds. Full top-60
 process history and access-log correlation are stored only during an event.
+
+## Long-running process finder
+
+Open **Long-running finder** in the main navigation to inspect processes that
+have remained alive for at least 30 days. Switch between the **30+ days** and
+**60+ days** filters to narrow the current snapshot. Results include the user,
+PID and parent PID, elapsed lifetime, approximate start time, CPU, memory,
+state, category, and command. The collector stores only the current bounded
+snapshot; this feature does not create historical process records.
 
 ## Top MySQL Users tracker
 

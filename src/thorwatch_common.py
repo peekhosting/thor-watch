@@ -12,7 +12,7 @@ import re
 import sqlite3
 
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 DEFAULT_CONFIG = "/etc/thorwatch/thorwatch.conf"
 
 
@@ -24,6 +24,8 @@ DEFAULTS = {
     "live_process_interval": "5",
     "live_process_limit": "20",
     "live_process_cpu_threshold": "0.5",
+    "long_running_processes_enabled": "true",
+    "long_running_process_limit": "200",
     "load_threshold": "20",
     "cpu_busy_threshold": "25",
     "burst_hold_seconds": "180",
@@ -94,6 +96,7 @@ def validate_settings(settings):
         "burst_interval",
         "live_process_interval",
         "live_process_limit",
+        "long_running_process_limit",
         "burst_hold_seconds",
         "max_event_seconds",
         "top_process_limit",
@@ -214,6 +217,21 @@ CREATE TABLE IF NOT EXISTS live_processes (
     args TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS long_running_processes (
+    rank INTEGER PRIMARY KEY,
+    updated_ts REAL NOT NULL,
+    pid INTEGER NOT NULL,
+    ppid INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    state TEXT NOT NULL,
+    elapsed REAL NOT NULL,
+    cpu_pct REAL NOT NULL,
+    mem_pct REAL NOT NULL,
+    comm TEXT NOT NULL,
+    category TEXT NOT NULL,
+    args TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mysql_tracking_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     requested_ts REAL NOT NULL,
@@ -290,7 +308,7 @@ def connect_database(path, read_only=False):
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(SCHEMA)
         conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '4')"
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '5')"
         )
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('app_version', ?)",

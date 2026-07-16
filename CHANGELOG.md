@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Replaced the Trends navigation item with a dedicated long-running process finder
+- Added current 30+ and 60+ day process views ordered by elapsed lifetime
+- Added bounded collector snapshots for long-running processes, including user, parent PID, resource usage, category, and command
+
 ## 0.4.0
 
 - Added a dedicated realtime cPanel/Exim email activity page

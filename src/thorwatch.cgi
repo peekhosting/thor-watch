@@ -1019,13 +1019,32 @@ def render_event(data):
         print("</tbody></table>")
     else:
         print('<p class="muted">No correlated access-log records. Confirm cPanel domlog paths and permissions.</p>')
-    print('</div><div class="panel"><h2>Top User-Agents</h2>')
+    if data["http_overflow_hits"]:
+        print(
+            '<p class="muted"><strong>{} additional hits are not ranked by source IP.</strong> '
+            'Their request fingerprints exceeded the event safety limit, so Thor Watch kept '
+            'their domain totals but grouped their IP detail into an overflow bucket.</p>'.format(
+                data["http_overflow_hits"]
+            )
+        )
+    print('</div><div class="panel"><h2>Top HTTP domains</h2>')
+    if data["top_domains"]:
+        print('<table><thead><tr><th>Domain/log</th><th class="num">Hits</th><th class="num">Share</th><th class="num">Accounts</th><th class="num">Source IPs</th></tr></thead><tbody>')
+        for row in data["top_domains"]:
+            print('<tr><td class="mono">{}</td><td class="num">{}</td><td class="num">{:.1f}%</td><td class="num">{}</td><td class="num">{}</td></tr>'.format(e(row["domain"]), row["hits"], row["share_pct"], row["accounts"], row["source_ips"]))
+        print("</tbody></table>")
+    else:
+        print('<p class="muted">No domain traffic was correlated for this event.</p>')
+    print('</div></div>')
+    print('<div class="panel"><h2>Top User-Agents</h2>')
     if data["top_agents"]:
         print('<table><thead><tr><th>User-Agent</th><th class="num">Hits</th></tr></thead><tbody>')
         for row in data["top_agents"]:
             print('<tr><td class="mono">{}</td><td class="num">{}</td></tr>'.format(e(row["user_agent"]), row["hits"]))
         print("</tbody></table>")
-    print("</div></div>")
+    else:
+        print('<p class="muted">No User-Agent traffic was correlated for this event.</p>')
+    print("</div>")
     print('<div class="panel"><h2>Top HTTP routes</h2><table><thead><tr><th>Account</th><th>Domain/log</th><th>Method</th><th>URI</th><th class="num">Hits</th></tr></thead><tbody>')
     for row in data["top_routes"]:
         print('<tr><td class="mono">{}</td><td>{}</td><td>{}</td><td class="mono">{}</td><td class="num">{}</td></tr>'.format(e(row["cpanel_user"]), e(row["domain"]), e(row["method"]), e(row["uri"]), row["hits"]))

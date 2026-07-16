@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- Added most-hit HTTP domain rankings to load event reports
+- Added per-domain traffic share, account count, and unique source-IP count
+- Kept synthetic overflow buckets out of source-IP rankings while reporting their omitted hit total
+- Included the domain ranking in TXT and JSON event exports
+
 ## 0.5.0
 
 - Replaced the Trends navigation item with a dedicated long-running process finder

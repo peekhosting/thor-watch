@@ -12,7 +12,7 @@ import re
 import sqlite3
 
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DEFAULT_CONFIG = "/etc/thorwatch/thorwatch.conf"
 
 
@@ -466,10 +466,33 @@ def event_report_data(conn, event_id):
     ips = conn.execute(
         """
         SELECT source_ip, SUM(hits) AS hits, COUNT(DISTINCT cpanel_user) AS accounts
-        FROM http_hits WHERE event_id = ? GROUP BY source_ip
+        FROM http_hits WHERE event_id = ? AND source_ip <> '[overflow]'
+        GROUP BY source_ip
         ORDER BY hits DESC LIMIT 30
         """,
         (event_id,),
+    ).fetchall()
+    overflow_hits = conn.execute(
+        """
+        SELECT COALESCE(SUM(hits), 0)
+        FROM http_hits WHERE event_id = ? AND source_ip = '[overflow]'
+        """,
+        (event_id,),
+    ).fetchone()[0]
+    domains = conn.execute(
+        """
+        SELECT domain, SUM(hits) AS hits,
+               COUNT(DISTINCT cpanel_user) AS accounts,
+               COUNT(DISTINCT CASE
+                   WHEN source_ip <> '[overflow]' THEN source_ip
+               END) AS source_ips,
+               100.0 * SUM(hits) / NULLIF(
+                   (SELECT SUM(hits) FROM http_hits WHERE event_id = ?), 0
+               ) AS share_pct
+        FROM http_hits WHERE event_id = ? GROUP BY domain
+        ORDER BY hits DESC, domain LIMIT 30
+        """,
+        (event_id, event_id),
     ).fetchall()
     routes = conn.execute(
         """
@@ -495,6 +518,8 @@ def event_report_data(conn, event_id):
         "categories": rows_as_dicts(categories),
         "commands": rows_as_dicts(commands),
         "top_ips": rows_as_dicts(ips),
+        "http_overflow_hits": int(overflow_hits),
+        "top_domains": rows_as_dicts(domains),
         "top_routes": rows_as_dicts(routes),
         "top_agents": rows_as_dicts(agents),
     }
@@ -535,6 +560,21 @@ def render_text_report(data):
         lines.append(
             "  {:8d} hits  {:3d} accounts  {}".format(
                 row["hits"], row["accounts"], row["source_ip"]
+            )
+        )
+    if data["http_overflow_hits"]:
+        lines.append(
+            "  {:8d} additional hits omitted: source IP unavailable after unique-request limit".format(
+                data["http_overflow_hits"]
+            )
+        )
+    lines.append("")
+    lines.append("Top HTTP domains:")
+    for row in data["top_domains"]:
+        lines.append(
+            "  {:8d} hits  {:5.1f}%  {:3d} accounts  {:4d} source IPs  {}".format(
+                row["hits"], row["share_pct"], row["accounts"],
+                row["source_ips"], row["domain"][:120]
             )
         )
     lines.append("")

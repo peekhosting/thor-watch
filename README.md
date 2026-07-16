@@ -4,7 +4,7 @@ Thor Watch is a root-only diagnostic WHM plugin for cPanel, CloudLinux, and
 LiteSpeed servers. It keeps lightweight system baselines and automatically
 switches to detailed process and HTTP evidence capture during a load spike.
 
-Version: **0.5.0**
+Version: **0.5.1**
 
 Public project identity:
 
@@ -24,6 +24,7 @@ can upgrade without losing configuration, reports, or service management.
 - CPU totals grouped by cPanel user and service category
 - active PHP script paths exposed by the LiteSpeed `lsphp` process title
 - source IP, domain/log, URI, status, and User-Agent correlation from cPanel domlogs
+- most-hit HTTP domain rankings with traffic share, account count, and unique source IPs
 - AJAX live cards refreshed every three seconds
 - continuously refreshed high-CPU process table with user, PID, elapsed time, category, and command
 - long-running process finder with current 30+ and 60+ day views, sorted oldest first
@@ -87,6 +88,11 @@ email_monitor_interval = 5
 An event begins when either threshold is met. The collector keeps a small top-20
 process snapshot for the realtime dashboard every five seconds. Full top-60
 process history and access-log correlation are stored only during an event.
+
+High-cardinality HTTP events are bounded by `http_unique_limit`. Hits beyond
+that unique-request fingerprint limit still contribute to per-domain totals,
+but their unavailable IP detail is reported separately instead of appearing as
+a synthetic `[overflow]` source IP.
 
 ## Long-running process finder
 

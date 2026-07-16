@@ -351,7 +351,48 @@ email_monitoring_enabled = false
         collector.capture_access_logs(force=True)
         row = collector.conn.execute("SELECT * FROM http_hits").fetchone()
         self.assertEqual(row["hits"], 2)
+        event_id = collector.event.id
+        now = time.time()
+        collector.conn.execute(
+            """
+            INSERT INTO http_hits(
+                event_id, fingerprint, cpanel_user, domain, source_ip, method,
+                uri, status, user_agent, hits, first_seen, last_seen
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id, "quiet-domain-test", "second", "quiet.test",
+                "203.0.113.8", "GET", "/health", 200, "HealthBot/1.0",
+                1, now, now,
+            ),
+        )
+        collector.conn.execute(
+            """
+            INSERT INTO http_hits(
+                event_id, fingerprint, cpanel_user, domain, source_ip, method,
+                uri, status, user_agent, hits, first_seen, last_seen
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id, "overflow-domain-test", "demo", "example.test",
+                "[overflow]", "-", "[other unique requests]", 0, "[various]",
+                7, now, now,
+            ),
+        )
+        collector.conn.commit()
         collector.close_event("test")
+        data = event_report_data(collector.conn, event_id)
+        self.assertEqual([item["domain"] for item in data["top_domains"]], ["example.test", "quiet.test"])
+        self.assertEqual(data["top_domains"][0]["hits"], 9)
+        self.assertEqual(data["top_domains"][0]["accounts"], 1)
+        self.assertEqual(data["top_domains"][0]["source_ips"], 1)
+        self.assertAlmostEqual(data["top_domains"][0]["share_pct"], 90.0)
+        self.assertEqual(data["http_overflow_hits"], 7)
+        self.assertNotIn("[overflow]", [item["source_ip"] for item in data["top_ips"]])
+        text_report = render_text_report(data)
+        self.assertIn("Top HTTP domains:", text_report)
+        self.assertIn("example.test", text_report)
+        self.assertIn("7 additional hits omitted", text_report)
 
     def test_live_proc_readers(self):
         first, cpu = read_system_snapshot(None)
@@ -573,7 +614,9 @@ email_monitoring_enabled = false
         )
         stdout, stderr = process.communicate(timeout=15)
         self.assertEqual(process.returncode, 0, stderr.decode("utf-8", "replace"))
-        self.assertIn("Top process commands", stdout.decode("utf-8", "replace"))
+        event_page = stdout.decode("utf-8", "replace")
+        self.assertIn("Top process commands", event_page)
+        self.assertIn("Top HTTP domains", event_page)
 
     def test_cgi_rejects_non_root(self):
         env = dict(os.environ)

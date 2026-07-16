@@ -52,12 +52,12 @@ dnf install -y git
 
 Versioned release archives and their SHA-256 checksum files are published on
 the [Releases page](https://github.com/peekhosting/thor-watch/releases). Replace
-`0.5.0` below with the release you want to install:
+`0.5.1` below with the release you want to install:
 
 ```bash
 ssh root@YOUR_SERVER_IP
 cd /usr/local/src
-VERSION=0.5.0
+VERSION=0.5.1
 curl -fLO "https://github.com/peekhosting/thor-watch/releases/download/v${VERSION}/thor-watch-${VERSION}.tar.gz"
 curl -fLO "https://github.com/peekhosting/thor-watch/releases/download/v${VERSION}/thor-watch-${VERSION}.sha256"
 sha256sum -c "thor-watch-${VERSION}.sha256"

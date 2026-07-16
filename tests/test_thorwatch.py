@@ -282,8 +282,43 @@ email_monitoring_enabled = false
         collector.run_once(force_event=False)
         event_count = collector.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         process_count = collector.conn.execute("SELECT COUNT(*) FROM live_processes").fetchone()[0]
+        schema_version = collector.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
         self.assertEqual(event_count, 0)
         self.assertGreater(process_count, 0)
+        self.assertEqual(schema_version, "5")
+
+    def test_long_running_process_snapshot(self):
+        collector = Collector(self.settings)
+        now = time.time()
+        collector.write_long_running_processes(
+            [
+                {
+                    "pid": 123,
+                    "ppid": 1,
+                    "username": "demo",
+                    "state": "S",
+                    "elapsed": 70 * 86400,
+                    "cpu_pct": 0.2,
+                    "mem_pct": 1.5,
+                    "comm": "worker",
+                    "category": "Other",
+                    "args": "/usr/local/bin/worker --serve",
+                }
+            ],
+            now,
+        )
+        row = collector.conn.execute(
+            "SELECT * FROM long_running_processes"
+        ).fetchone()
+        self.assertEqual(row["pid"], 123)
+        self.assertEqual(row["elapsed"], 70 * 86400)
+        self.assertEqual(row["updated_ts"], now)
+        state = collector.conn.execute(
+            "SELECT value FROM meta WHERE key = 'long_running_updated_ts'"
+        ).fetchone()
+        self.assertEqual(float(state["value"]), now)
 
     def test_access_log_event_correlation(self):
         log_root = os.path.join(self.tempdir.name, "domlogs")
@@ -326,6 +361,13 @@ email_monitoring_enabled = false
         processes = reader.read(5, 0, second["mem_total_kb"])
         self.assertTrue(processes)
         self.assertIn("args", processes[0])
+        long_running = reader.long_running(0, 5)
+        self.assertTrue(long_running)
+        self.assertIn("category", long_running[0])
+        self.assertEqual(
+            [item["elapsed"] for item in long_running],
+            sorted([item["elapsed"] for item in long_running], reverse=True),
+        )
 
     def test_cgi_renders_root_dashboard(self):
         collector = Collector(self.settings)
@@ -345,6 +387,23 @@ email_monitoring_enabled = false
             VALUES(?, 'demo', 'sender@example.test', 7, ?)
             """,
             (bucket_ts, scan_ts),
+        )
+        collector.write_long_running_processes(
+            [
+                {
+                    "pid": 456,
+                    "ppid": 1,
+                    "username": "demo",
+                    "state": "S",
+                    "elapsed": 70 * 86400,
+                    "cpu_pct": 0.1,
+                    "mem_pct": 0.5,
+                    "comm": "old-worker",
+                    "category": "Other",
+                    "args": "/usr/local/bin/old-worker",
+                }
+            ],
+            scan_ts,
         )
         collector.conn.commit()
         env = dict(os.environ)
@@ -377,6 +436,7 @@ email_monitoring_enabled = false
         self.assertEqual(page.count('id="live-status"'), 1)
         self.assertLess(page.index('id="live-status"'), page.index('</nav>'))
         self.assertIn('href="?view=processes"', page)
+        self.assertIn('href="?view=long-running"', page)
         self.assertIn('href="?view=mysql"', page)
         self.assertIn('href="?view=email"', page)
         self.assertIn('href="?view=events"', page)
@@ -387,6 +447,7 @@ email_monitoring_enabled = false
         )
         self.assertIn('id="load-chart"', page)
         self.assertIn('id="cpu-chart"', page)
+        self.assertNotIn('>Trends</a>', page)
         self.assertNotIn('id="realtime-processes"', page)
         self.assertNotIn('id="live-process-body"', page)
         self.assertNotIn('id="mysql-track-button"', page)
@@ -395,6 +456,7 @@ email_monitoring_enabled = false
 
         view_expectations = (
             ("processes", 'id="realtime-processes"', 'id="live-process-body"'),
+            ("long-running", 'id="long-running-processes"', "Processes running 30+ days"),
             ("mysql", 'id="mysql-tracker"', 'id="mysql-track-button"'),
             ("email", 'id="email-activity-body"', 'id="email-history-chart"'),
             ("events", 'id="load-event-history"', "Load event history"),
@@ -412,7 +474,11 @@ email_monitoring_enabled = false
             view_page = stdout.decode("utf-8", "replace")
             self.assertIn(first_expected, view_page)
             self.assertIn(second_expected, view_page)
-            self.assertIn('href="?view={}">Refresh</a>'.format(view), view_page)
+            refresh_href = (
+                '?view=long-running&amp;days=30' if view == "long-running"
+                else '?view={}'.format(view)
+            )
+            self.assertIn('href="{}">Refresh</a>'.format(refresh_href), view_page)
             self.assertIn(
                 'class="active" aria-current="page" href="?view={}"'.format(view),
                 view_page,
@@ -420,6 +486,23 @@ email_monitoring_enabled = false
             if view == "email":
                 self.assertIn("sender@example.test", view_page)
                 self.assertIn('id="email-messages">7</div>', view_page)
+            if view == "long-running":
+                self.assertIn("old-worker", view_page)
+                self.assertIn("60+ days", view_page)
+
+        env["QUERY_STRING"] = "view=long-running&days=60"
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(SRC, "thorwatch.cgi")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stderr.decode("utf-8", "replace"))
+        long_page = stdout.decode("utf-8", "replace")
+        self.assertIn("Processes running 60+ days", long_page)
+        self.assertIn('class="button active" href="?view=long-running&amp;days=60"', long_page)
+        self.assertIn("old-worker", long_page)
 
         env["QUERY_STRING"] = "action=api-email"
         process = subprocess.Popen(

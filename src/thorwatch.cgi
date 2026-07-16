@@ -145,6 +145,7 @@ animation:pulse 1.8s infinite}.stale .live-dot{background:#e28a20;animation:none
 .mysql-status{margin:12px 0;color:var(--muted)}.mysql-status strong{color:var(--ink)}.mysql-error{color:var(--red);font-weight:650}.mysql-results{margin-top:10px}
 .email-cards{grid-template-columns:repeat(4,minmax(150px,1fr))}.email-rank{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:7px;background:#e8f0fd;color:#1557ad;font-weight:800}
 .email-share{min-width:120px}.email-share .bar{margin-top:4px}.email-history-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}.email-history-head p{margin:3px 0 0}
+.finder-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.finder-controls .button.active{background:var(--blue);border-color:var(--blue);color:#fff}
 .hidden{display:none!important}
 .site-footer{position:fixed;left:0;right:0;bottom:0;z-index:1000;min-height:40px;padding:10px 18px;background:rgba(255,255,255,.97);
 border-top:1px solid var(--line);box-shadow:0 -2px 12px rgba(23,32,51,.06);color:var(--muted);text-align:center;font-size:12px;backdrop-filter:blur(8px)}
@@ -164,6 +165,7 @@ def page_start(title, open_event=False, active="overview", refresh_href="?", liv
     print("<title>{}</title><style>{}</style></head>".format(e(title), CSS))
     print('<body data-open="{}"><header class="site-header">'.format(refresh))
     overview_attr = ' class="active" aria-current="page"' if active == "overview" else ""
+    long_running_attr = ' class="active" aria-current="page"' if active == "long-running" else ""
     process_attr = ' class="active" aria-current="page"' if active == "processes" else ""
     mysql_attr = ' class="active" aria-current="page"' if active == "mysql" else ""
     email_attr = ' class="active" aria-current="page"' if active == "email" else ""
@@ -182,7 +184,7 @@ def page_start(title, open_event=False, active="overview", refresh_href="?", liv
         '<a class="button" href="?action=export-latest&amp;format=txt">Latest report</a>'
         '<a class="button primary" href="{}">Refresh</a></div></div>'
         '<div class="subnav-shell"><nav class="subnav" aria-label="Thor Watch sections">'
-        '<a{} href="?">Overview</a><a href="?#load-trends">Trends</a>'
+        '<a{} href="?">Overview</a><a{} href="?view=long-running">Long-running finder</a>'
         '<details class="log-menu{}"><summary>Logs <span class="menu-caret" aria-hidden="true">&#9662;</span></summary>'
         '<div class="logs-dropdown">'
         '<a{} href="?view=processes"><strong>Realtime high-CPU processes</strong>'
@@ -194,7 +196,7 @@ def page_start(title, open_event=False, active="overview", refresh_href="?", liv
         '<a{} href="?view=events"><strong>Load event history</strong>'
         '<span>Captured threshold events</span></a>'
         '</div></details>{}</nav></div></header><main class="wrap">'
-        .format(e(refresh_href), overview_attr, logs_class, process_attr, mysql_attr, email_attr, events_attr, live_status_html)
+        .format(e(refresh_href), overview_attr, long_running_attr, logs_class, process_attr, mysql_attr, email_attr, events_attr, live_status_html)
     )
 
 
@@ -415,6 +417,30 @@ def process_rows(rows):
                 e(row["username"]), row["pid"], cpu_class, row["cpu_pct"], row["mem_pct"],
                 e(human_duration(row["elapsed"])), e(row["state"]), e(row["category"]),
                 e(row["args"]), e(row["args"]),
+            )
+        )
+    return "".join(output)
+
+
+def long_running_rows(rows, days):
+    if not rows:
+        return (
+            '<tr><td colspan="10" class="muted">No current processes have been '
+            'running for {} days or longer.</td></tr>'.format(days)
+        )
+    output = []
+    for row in rows:
+        cpu_class = "cpu-hot" if row["cpu_pct"] >= 100 else ("cpu-warm" if row["cpu_pct"] >= 50 else "")
+        started_ts = max(0, row["updated_ts"] - row["elapsed"])
+        output.append(
+            '<tr><td class="mono">{}</td><td class="num">{}</td><td class="num">{}</td>'
+            '<td><strong>{}</strong></td><td>{}</td><td class="num {}">{:.1f}%</td>'
+            '<td class="num">{:.2f}%</td><td>{}</td><td>{}</td>'
+            '<td class="mono truncate" title="{}">{}</td></tr>'.format(
+                e(row["username"]), row["pid"], row["ppid"],
+                e(human_duration(row["elapsed"])), e(local_time(started_ts)),
+                cpu_class, row["cpu_pct"], row["mem_pct"], e(row["state"]),
+                e(row["category"]), e(row["args"]), e(row["args"]),
             )
         )
     return "".join(output)
@@ -752,6 +778,84 @@ def render_processes(conn, settings):
     page_end()
 
 
+def render_long_running_processes(conn, settings, query):
+    days = 60 if query.get("days", ["30"])[0] == "60" else 30
+    threshold = days * 86400
+    limit = settings.integer("long_running_process_limit")
+    rows = conn.execute(
+        """
+        SELECT * FROM long_running_processes
+        WHERE elapsed >= ?
+        ORDER BY elapsed DESC, pid DESC LIMIT ?
+        """,
+        (threshold, limit),
+    ).fetchall()
+    summary = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN elapsed >= 2592000 THEN 1 ELSE 0 END) AS days_30,
+            SUM(CASE WHEN elapsed >= 5184000 THEN 1 ELSE 0 END) AS days_60,
+            MAX(elapsed) AS oldest,
+            MAX(updated_ts) AS updated_ts
+        FROM long_running_processes
+        """
+    ).fetchone()
+    count_30 = int(summary["days_30"] or 0)
+    count_60 = int(summary["days_60"] or 0)
+    oldest = human_duration(summary["oldest"]) if summary["oldest"] else "—"
+    updated_ts = summary["updated_ts"]
+    if not updated_ts:
+        state = conn.execute(
+            "SELECT value FROM meta WHERE key = 'long_running_updated_ts'"
+        ).fetchone()
+        try:
+            updated_ts = float(state["value"]) if state else None
+        except (TypeError, ValueError):
+            updated_ts = None
+    updated = local_time(updated_ts) if updated_ts else "waiting"
+    page_start(
+        "Thor Watch - Long-running process finder",
+        False,
+        active="long-running",
+        refresh_href="?view=long-running&days={}".format(days),
+    )
+    print(
+        '<div class="panel"><div class="live-head"><div><h2>Long-running process finder</h2>'
+        '<p class="muted">Find processes that are still running after 30 or 60 days. '
+        'Results are ordered from longest to shortest elapsed lifetime.</p></div>'
+        '<div class="finder-controls" aria-label="Process age threshold">'
+        '<a class="button{}" href="?view=long-running&amp;days=30">30+ days</a>'
+        '<a class="button{}" href="?view=long-running&amp;days=60">60+ days</a>'
+        '</div></div></div>'.format(
+            " active" if days == 30 else "", " active" if days == 60 else ""
+        )
+    )
+    if not settings.boolean("long_running_processes_enabled"):
+        print(
+            '<div class="panel warning"><h2>Long-running process collection is disabled</h2>'
+            '<p>Enable <span class="mono">long_running_processes_enabled</span> in the '
+            'Thor Watch configuration and restart the collector.</p></div>'
+        )
+    print('<div class="cards">')
+    print(card("30+ days", count_30, "currently running"))
+    print(card("60+ days", count_60, "currently running"))
+    print(card("Oldest process", oldest, "elapsed lifetime"))
+    print(card("Snapshot", updated, "collector update"))
+    print('</div>')
+    print(
+        '<div class="panel" id="long-running-processes"><div class="live-head">'
+        '<h2>Processes running {}+ days</h2><span class="ajax-note">{} result{} · limit {}</span>'
+        '</div><table><thead><tr><th>User</th><th class="num">PID</th>'
+        '<th class="num">PPID</th><th>Elapsed</th><th>Approx. started</th>'
+        '<th class="num">CPU</th><th class="num">Memory</th><th>State</th>'
+        '<th>Category</th><th>Command</th></tr></thead><tbody>{}</tbody></table></div>'.format(
+            days, len(rows), "" if len(rows) == 1 else "s", limit,
+            long_running_rows(rows, days),
+        )
+    )
+    page_end()
+
+
 def render_mysql_tracker(conn, settings):
     mysql_tracking = mysql_tracking_data(conn)
     mysql_run = mysql_tracking["run"]
@@ -998,6 +1102,8 @@ def main():
             print("<!doctype html><title>Not found</title><h1>Event not found</h1>")
     elif view == "processes":
         render_processes(conn, settings)
+    elif view == "long-running":
+        render_long_running_processes(conn, settings, query)
     elif view == "mysql":
         render_mysql_tracker(conn, settings)
     elif view == "email":
